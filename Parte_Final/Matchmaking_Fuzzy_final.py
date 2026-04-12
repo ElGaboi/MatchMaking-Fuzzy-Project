@@ -4,25 +4,183 @@ import random
 import skfuzzy as fuzz
 from skfuzzy import control as ctrl
 import matplotlib.pyplot as plt
+import itertools
+import os
 
 
+
+# MÉTODOS DE GERAÇÃO DE TIMES
+def metodo_otimizado(df):
+    organizado = df.sort_values(by="grau_consistencia").reset_index(drop=True)
+
+    idx = random.randint(0, len(organizado) - 10)
+    players_10 = organizado.iloc[idx:idx+10]
+    ratings = players_10["grau_consistencia"].values
+
+    best_score = float("inf")
+    best_split = None
+
+    for comb in itertools.combinations(range(10), 5):
+        team_A = ratings[list(comb)]
+        team_B = np.delete(ratings, comb)
+
+        media_diff = abs(np.mean(team_A) - np.mean(team_B))
+        variancia = max(np.std(team_A), np.std(team_B))
+
+        score = media_diff * 0.7 + variancia * 0.3
+
+        if score < best_score:
+            best_score = score
+            best_split = comb
+
+    time_A = ratings[list(best_split)]
+    time_B = np.delete(ratings, best_split)
+
+    return time_A, time_B
+
+
+def metodo_aleatorio(df):
+    players = df.sample(n=10, replace=False).copy()
+
+    ratings = np.array(players["grau_consistencia"], dtype=float)
+
+    ratings = ratings.copy()
+    np.random.shuffle(ratings)
+
+    return ratings[:5], ratings[5:]
+
+
+
+# SISTEMA FUZZY
+
+def criar_sistema_fuzzy():
+    diferenca = ctrl.Antecedent(np.arange(-2,2.01,0.05),'dif')
+    variancia = ctrl.Antecedent(np.arange(0.00,2.01, 0.05), 'var')
+    qualidade = ctrl.Consequent(np.arange(0,10.1,0.1),'qualidade')
+
+    diferenca['ruim'] = fuzz.trapmf(diferenca.universe, [-2,-2,-1.2,-0.8])
+    diferenca['leve'] = fuzz.trimf(diferenca.universe, [-1.2,0,1.2])
+    diferenca['boa'] = fuzz.trapmf(diferenca.universe, [0.8,1.2,2,2])
+
+    variancia['baixa'] = fuzz.trapmf(variancia.universe, [0,0,0.2,0.5])
+    variancia['media'] = fuzz.trimf(variancia.universe, [0.3,0.8,1.3])
+    variancia['alta'] = fuzz.trapmf(variancia.universe, [1,1.5,2,2])
+
+    qualidade['ruim'] = fuzz.trimf(qualidade.universe, [0,2,4])
+    qualidade['boa'] = fuzz.trimf(qualidade.universe, [3,5.5,8])
+    qualidade['excelente'] = fuzz.trimf(qualidade.universe, [7,9,10])
+
+    regras = [
+        ctrl.Rule(diferenca['ruim'], qualidade['ruim']),
+        ctrl.Rule(variancia['alta'], qualidade['ruim']),
+        ctrl.Rule(diferenca['leve'] & variancia['baixa'], qualidade['excelente']),
+        ctrl.Rule(diferenca['leve'] & variancia['media'], qualidade['boa']),
+        ctrl.Rule(diferenca['boa'] & variancia['baixa'], qualidade['boa']),
+    ]
+
+    sistema = ctrl.ControlSystem(regras)
+    return sistema
+
+
+def avaliar_partida(time_A, time_B, sistema):
+    sim = ctrl.ControlSystemSimulation(sistema)
+
+    dif = np.mean(time_A) - np.mean(time_B)
+    var = max(np.std(time_A), np.std(time_B))
+
+    sim.input['dif'] = dif
+    sim.input['var'] = var
+
+    sim.compute()
+    return sim.output['qualidade']
+
+
+
+# FUNÇÃO DE SIMULAÇÃO (NOVO)
+
+
+def simular_metodos(df, n=100):
+    sistema = criar_sistema_fuzzy()
+
+    resultados_otimizado = []
+    resultados_aleatorio = []
+
+    for _ in range(n):
+        tA, tB = metodo_otimizado(df)
+        resultados_otimizado.append(avaliar_partida(tA, tB, sistema))
+
+        tA, tB = metodo_aleatorio(df)
+        resultados_aleatorio.append(avaliar_partida(tA, tB, sistema))
+
+    
+    # GRÁFICO COMPARATIVO
+    
+
+    plt.figure(figsize=(10,5))
+
+    plt.hist(resultados_otimizado, bins=20, alpha=0.6, label="Otimizado")
+    plt.hist(resultados_aleatorio, bins=20, alpha=0.6, label="Aleatório")
+
+    plt.xlabel("Qualidade da Partida")
+    plt.ylabel("Frequência")
+    plt.title("Comparação: Método Otimizado vs Aleatório")
+    plt.legend()
+    plt.grid(alpha=0.3)
+
+    plt.show()
+
+    print(f"Média Otimizado: {np.mean(resultados_otimizado):.2f}")
+    print(f"Média Aleatório: {np.mean(resultados_aleatorio):.2f}")
+
+
+########################## MAIN #######################################
 #Lê o documento CSV
-df = pd.read_csv("matchmaking_fuzzy_output.csv")
+
+
+base_path = os.path.dirname(__file__)
+csv_path = os.path.join(base_path, "matchmaking_fuzzy_output.csv")
+
+df = pd.read_csv(csv_path)
+
 
 #Extrai 10 jogadores do dataset 
-players_10 = df.sample(n=10, replace=False, random_state=None)
+players_10 = df.sample(n=10, replace=False)
+
+
+#ORDENA jopgadores por grau de consistência
+organizado = df.sort_values(by="grau_consistencia").reset_index(drop=True)
+
+#Escolhe jogador base aleatório
+idx = random.randint(0, len(organizado)- 10)
+
+#Seleciona 10 jogadores consecutivos  de nível parecido
+players_10 = organizado.iloc[idx:idx+10]
+
 ratings = players_10["grau_consistencia"].values
-ratings.shape
 
-#Separa em dois times
-indices = np.arange(10)
-np.random.shuffle(indices)
 
-time_A_idx = indices[:5]
-time_B_idx = indices[5:]
+best_diff = float("inf")
+best_split = None
 
-time_A = ratings[time_A_idx]
-time_B = ratings[time_B_idx]
+# Testa várias combinações possíveis
+for comb in itertools.combinations(range(10), 5):
+    team_A = ratings[list(comb)]
+    team_B = np.delete(ratings, comb)
+    
+    media_diff = abs(np.mean(team_A) - np.mean(team_B))
+
+    std_A = np.std(team_A)
+    std_B = np.std(team_B)
+    variancia = max(std_A, std_B)
+
+    score = media_diff + variancia
+    
+    if score < best_diff:
+        best_diff = score
+        best_split = comb
+
+time_A = ratings[list(best_split)]
+time_B = np.delete(ratings, best_split)
 
 #Media dos times
 media_A = np.mean(time_A)
@@ -215,8 +373,7 @@ plt.show()
 #print(f"Média Time B: {media_B:.2f}")
 #print(f"Desvio Padrão Time A: {desvio_A:.2f}")
 #print(f"Desvio Padrão Time B: {desvio_B:.2f}")
-
-
+simular_metodos(df, n=200)
 
 
 
