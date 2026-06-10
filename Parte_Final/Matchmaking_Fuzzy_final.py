@@ -38,7 +38,6 @@ def metodo_otimizado(df):
 
     return time_A, time_B
 
-
 def metodo_aleatorio(df):
     players = df.sample(n=10, replace=False).copy()
 
@@ -48,7 +47,6 @@ def metodo_aleatorio(df):
     np.random.shuffle(ratings)
 
     return ratings[:5], ratings[5:]
-
 
 
 # SISTEMA FUZZY
@@ -88,13 +86,21 @@ def avaliar_partida(time_A, time_B, sistema):
     dif = np.mean(time_A) - np.mean(time_B)
     var = max(np.std(time_A), np.std(time_B))
 
+    dif = np.clip(dif, -2.0, 2.0)
+    var = np.clip(var,  0.0, 2.0)
+
+    # Evita var=0 exato que causa falha de ativação nas regras
+    if var == 0.0:
+        var = 0.01
+
     sim.input['dif'] = dif
     sim.input['var'] = var
 
-    sim.compute()
-    return sim.output['qualidade']
-
-
+    try:
+        sim.compute()
+        return sim.output['qualidade']
+    except KeyError:
+        return 5.0
 
 # FUNÇÃO DE SIMULAÇÃO (NOVO)
 
@@ -121,7 +127,7 @@ def simular_metodos(df, n=100):
     plt.hist(resultados_otimizado, bins=20, alpha=0.6, label="Otimizado")
     plt.hist(resultados_aleatorio, bins=20, alpha=0.6, label="Aleatório")
 
-    plt.xlabel("Qualidade da Partida")
+    plt.xlabel("Qualidade do Pareamento")
     plt.ylabel("Frequência")
     plt.title("Comparação: Método Otimizado vs Aleatório")
     plt.legend()
@@ -138,49 +144,40 @@ def simular_metodos(df, n=100):
 
 
 base_path = os.path.dirname(__file__)
-csv_path = os.path.join(base_path, "matchmaking_fuzzy_output.csv")
+csv_path = os.path.join(base_path, "MatchmakingFuzzyAdaptado_output.csv")
 
 df = pd.read_csv(csv_path)
 
+METODO = 'otimizado'
 
-#Extrai 10 jogadores do dataset 
-players_10 = df.sample(n=10, replace=False)
-
-
-#ORDENA jopgadores por grau de consistência
-organizado = df.sort_values(by="grau_consistencia").reset_index(drop=True)
-
-#Escolhe jogador base aleatório
-idx = random.randint(0, len(organizado)- 10)
-
-#Seleciona 10 jogadores consecutivos  de nível parecido
-players_10 = organizado.iloc[idx:idx+10]
-
-ratings = players_10["grau_consistencia"].values
+# Seleciona e embaralha os 10 jogadores antes da divisão
+players_10 = df.sample(n=10, replace=False).copy()
+ratings = np.array(players_10["grau_consistencia"], dtype=float)
+np.random.shuffle(ratings)
 
 
-best_diff = float("inf")
-best_split = None
+if METODO == "otimizado":
+    best_diff = float("inf")
+    best_split = None
 
-# Testa várias combinações possíveis
-for comb in itertools.combinations(range(10), 5):
-    team_A = ratings[list(comb)]
-    team_B = np.delete(ratings, comb)
-    
-    media_diff = abs(np.mean(team_A) - np.mean(team_B))
+    for comb in itertools.combinations(range(10), 5):
+        team_A = ratings[list(comb)]
+        team_B = np.delete(ratings, comb)
 
-    std_A = np.std(team_A)
-    std_B = np.std(team_B)
-    variancia = max(std_A, std_B)
+        media_diff = abs(np.mean(team_A) - np.mean(team_B))
+        variancia = max(np.std(team_A), np.std(team_B))
+        score = media_diff + variancia
 
-    score = media_diff + variancia
-    
-    if score < best_diff:
-        best_diff = score
-        best_split = comb
+        if score < best_diff:
+            best_diff = score
+            best_split = comb
 
-time_A = ratings[list(best_split)]
-time_B = np.delete(ratings, best_split)
+    time_A = ratings[list(best_split)]
+    time_B = np.delete(ratings, best_split)
+else:
+    # Divisão puramente aleatória — ratings já embaralhados no bloco acima
+    time_A = ratings[:5]
+    time_B = ratings[5:]
 
 #Media dos times
 media_A = np.mean(time_A)
@@ -207,7 +204,7 @@ diferenca_das_equipes = ctrl.Antecedent(np.arange(-2,2.01,0.05),'diferença das 
 variancia_interna = ctrl.Antecedent(np.arange(0.00,2.01, 0.05), 'variancia interna das equipes')
 
 #Variaveis de Saída
-qualidade_partida = ctrl.Consequent(np.arange(0,10.1,0.1),'qualidade da partida')
+qualidade_pareamento = ctrl.Consequent(np.arange(0,10.1,0.1),'qualidade do pareamento')
 
 #Funções de pertinência
 diferenca_das_equipes['B muito melhor'] = fuzz.trapmf(diferenca_das_equipes.universe, [-2,-2,-1.2,-0.8])
@@ -222,21 +219,21 @@ variancia_interna['moderada'] = fuzz.trimf(variancia_interna.universe, [0.5,0.8,
 variancia_interna['alta'] = fuzz.trimf(variancia_interna.universe, [1,1.3,1.6])
 variancia_interna['muito alta'] = fuzz.trapmf(variancia_interna.universe, [1.4,1.6,2,2])
 
-qualidade_partida['muito ruim'] = fuzz.trapmf(qualidade_partida.universe, [0,0,1.5,3])
-qualidade_partida['ruim'] = fuzz.trimf(qualidade_partida.universe, [2,3.5,5])
-qualidade_partida['boa'] = fuzz.trimf(qualidade_partida.universe, [4.5,6.5,8])
-qualidade_partida['muito boa'] = fuzz.trapmf(qualidade_partida.universe, [7,8.5,10,10])
+qualidade_pareamento['muito ruim'] = fuzz.trapmf(qualidade_pareamento.universe, [0,0,1.5,3])
+qualidade_pareamento['ruim'] = fuzz.trimf(qualidade_pareamento.universe, [2,3.5,5])
+qualidade_pareamento['boa'] = fuzz.trimf(qualidade_pareamento.universe, [4.5,6.5,8])
+qualidade_pareamento['muito boa'] = fuzz.trapmf(qualidade_pareamento.universe, [7,8.5,10,10])
 
 #Base de regras
-rule1 = ctrl.Rule(diferenca_das_equipes['A muito melhor'] | diferenca_das_equipes['B muito melhor'], qualidade_partida['muito ruim'])
-rule2 = ctrl.Rule(diferenca_das_equipes['equilibrado'] & variancia_interna['muito alta'], qualidade_partida['ruim'])
-rule3 = ctrl.Rule(diferenca_das_equipes['equilibrado'] & variancia_interna['muito baixa'], qualidade_partida['muito boa'])
-rule4 = ctrl.Rule((diferenca_das_equipes['A melhor'] | diferenca_das_equipes['B melhor']) & variancia_interna['baixa'], qualidade_partida['boa'] )
-rule5 = ctrl.Rule((diferenca_das_equipes['A melhor'] | diferenca_das_equipes['B melhor']) & variancia_interna['alta'], qualidade_partida['ruim'])
-rule6 = ctrl.Rule(diferenca_das_equipes['equilibrado'] & variancia_interna['alta'], qualidade_partida['ruim'])
-rule7 = ctrl.Rule(diferenca_das_equipes['equilibrado'] & variancia_interna['baixa'], qualidade_partida['muito boa'])
-rule8 = ctrl.Rule(diferenca_das_equipes['equilibrado'] & variancia_interna['moderada'], qualidade_partida['muito boa'])
-rule9 = ctrl.Rule((diferenca_das_equipes['A melhor'] | diferenca_das_equipes['B melhor']) & variancia_interna['moderada'], qualidade_partida['boa'])
+rule1 = ctrl.Rule(diferenca_das_equipes['A muito melhor'] | diferenca_das_equipes['B muito melhor'], qualidade_pareamento['muito ruim'])
+rule2 = ctrl.Rule(diferenca_das_equipes['equilibrado'] & variancia_interna['muito alta'], qualidade_pareamento['ruim'])
+rule3 = ctrl.Rule(diferenca_das_equipes['equilibrado'] & variancia_interna['muito baixa'], qualidade_pareamento['muito boa'])
+rule4 = ctrl.Rule((diferenca_das_equipes['A melhor'] | diferenca_das_equipes['B melhor']) & variancia_interna['baixa'], qualidade_pareamento['boa'] )
+rule5 = ctrl.Rule((diferenca_das_equipes['A melhor'] | diferenca_das_equipes['B melhor']) & variancia_interna['alta'], qualidade_pareamento['ruim'])
+rule6 = ctrl.Rule(diferenca_das_equipes['equilibrado'] & variancia_interna['alta'], qualidade_pareamento['ruim'])
+rule7 = ctrl.Rule(diferenca_das_equipes['equilibrado'] & variancia_interna['baixa'], qualidade_pareamento['muito boa'])
+rule8 = ctrl.Rule(diferenca_das_equipes['equilibrado'] & variancia_interna['moderada'], qualidade_pareamento['muito boa'])
+rule9 = ctrl.Rule((diferenca_das_equipes['A melhor'] | diferenca_das_equipes['B melhor']) & variancia_interna['moderada'], qualidade_pareamento['boa'])
 
 #Gerando saída do Sistema Fuzzy
 matchmaking_ctrl = ctrl.ControlSystem([rule1,rule2,rule3,rule4,rule5,rule6,rule7,rule8,rule9])
@@ -247,8 +244,8 @@ sim.input['variancia interna das equipes'] = dispersao_partida
 
 sim.compute()
 
-#qualidade = sim.output['qualidade da partida']
-#print(f"Qualidade da partida Fuzzy: {qualidade: .2f}")
+#qualidade = sim.output['qualidade do pareamento]
+#print(f"Qualidade do pareamento Fuzzy: {qualidade: .2f}")
 
 #Ativação das regras em variancia interna:
 fig, ax = plt.subplots()
@@ -306,14 +303,14 @@ plt.show()
 
 #PLOT GRÁFICO DA SAÍDA:
 fig, ax = plt.subplots()
-for term in qualidade_partida.terms:
+for term in qualidade_pareamento.terms:
     ax.plot(
-        qualidade_partida.universe,
-        qualidade_partida[term].mf,
+        qualidade_pareamento.universe,
+        qualidade_pareamento[term].mf,
         linewidth=2,
         label=term   )
     
-valor = sim.output['qualidade da partida']    
+valor = sim.output['qualidade do pareamento']    
 
 ax.axvline(
     valor,
@@ -324,7 +321,7 @@ ax.axvline(
 )    
 
 ax.set_title("")
-ax.set_xlabel("Qualidade da partida")
+ax.set_xlabel("Qualidade do Pareamento")
 ax.set_ylabel("Grau de pertinência")
 ax.legend()
 ax.grid(True)
