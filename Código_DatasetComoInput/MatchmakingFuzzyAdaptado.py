@@ -144,7 +144,7 @@ df['rounds_vivo_vitoria'] = (
     (rvv_raw - rvv_raw.min()) / (rvv_raw.max() - rvv_raw.min()) * 80 + 10
 ).clip(0, 99)
 
-# Estimativa de clutchs ganhos: proxy pelo rating normalizado na escala [0, 11]
+
 df['clutchs_ganhos']  = 3.0
 
 # ============================================================
